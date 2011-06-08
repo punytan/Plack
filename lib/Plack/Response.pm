@@ -9,6 +9,15 @@ use Carp ();
 use Scalar::Util ();
 use HTTP::Headers;
 use URI::Escape ();
+use URI ();
+
+our $LWS = do {
+    my $CRLF = "\015\012"; # "\r\n"
+    my $SP   = chr(32);    # " "
+    my $HT   = chr(9);     # "\t"
+
+    qr/${CRLF}[$SP|$HT]+/;
+};
 
 sub code    { shift->status(@_) }
 sub content { shift->body(@_)   }
@@ -65,7 +74,15 @@ sub content_encoding {
 }
 
 sub location {
-    shift->headers->header('Location' => @_);
+    my $self = shift;
+
+    if (@_) {
+        my $uri = shift;
+        my $loc = URI->new($uri)->as_string;
+        $self->headers->header('Location' => $loc);
+    }
+
+    return $self->headers->header('Location');
 }
 
 sub redirect {
@@ -92,7 +109,16 @@ sub finalize {
         +[
             map {
                 my $k = $_;
-                map { ( $k => $_ ) } $self->headers->header($_);
+                $k =~ s/\p{PosixCntrl}|:/-/g; # allow only printable chars, except ":"
+
+                map {
+                    my $v = $_;
+                    $v =~ s/$LWS/chr(32)/ge; # replace LWS with a single SP
+                    $v =~ s/\015|\012//g;    # remove CR and LF since the char is invalid here
+
+                    ( $k => $v )
+                } $self->headers->header($_);
+
             } $self->headers->header_field_names
         ],
         $self->_body,
